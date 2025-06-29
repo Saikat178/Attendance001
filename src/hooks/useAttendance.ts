@@ -39,32 +39,60 @@ export const useAttendance = (employeeId: string) => {
       
       // Get today's attendance
       const today = new Date().toISOString().split('T')[0];
-      const { data: todayData } = await supabase
+      
+      // Try Supabase first
+      const { data: todayData, error: todayError } = await supabase
         .from('attendance_records')
         .select('*')
         .eq('employee_id', employeeId)
         .eq('date', today)
-        .single();
+        .maybeSingle();
 
-      if (todayData) {
+      if (!todayError && todayData) {
         setTodayAttendance(transformAttendanceRecord(todayData));
       } else {
-        setTodayAttendance(null);
+        // Fallback to localStorage
+        const localAttendance = localStorage.getItem(`attendance_${employeeId}_${today}`);
+        if (localAttendance) {
+          setTodayAttendance(JSON.parse(localAttendance));
+        } else {
+          setTodayAttendance(null);
+        }
       }
 
       // Get attendance history
-      const { data: historyData } = await supabase
+      const { data: historyData, error: historyError } = await supabase
         .from('attendance_records')
         .select('*')
         .eq('employee_id', employeeId)
         .order('date', { ascending: false })
         .limit(30);
 
-      if (historyData) {
+      if (!historyError && historyData) {
         setAttendanceHistory(historyData.map(transformAttendanceRecord));
+      } else {
+        // Fallback to localStorage
+        const localHistory = localStorage.getItem(`attendance_history_${employeeId}`);
+        if (localHistory) {
+          setAttendanceHistory(JSON.parse(localHistory));
+        } else {
+          setAttendanceHistory([]);
+        }
       }
     } catch (error) {
       console.error('Error loading attendance data:', error);
+      
+      // Always fallback to localStorage
+      const today = new Date().toISOString().split('T')[0];
+      const localAttendance = localStorage.getItem(`attendance_${employeeId}_${today}`);
+      const localHistory = localStorage.getItem(`attendance_history_${employeeId}`);
+      
+      if (localAttendance) {
+        setTodayAttendance(JSON.parse(localAttendance));
+      }
+      if (localHistory) {
+        setAttendanceHistory(JSON.parse(localHistory));
+      }
     } finally {
       setLoading(false);
     }
@@ -86,9 +114,11 @@ export const useAttendance = (employeeId: string) => {
 
   const saveAttendance = async (record: Partial<AttendanceRecord>) => {
     try {
+      const today = new Date().toISOString().split('T')[0];
+      
       const attendanceData = {
         employee_id: employeeId,
-        date: record.date,
+        date: record.date || today,
         check_in: record.checkIn?.toISOString(),
         check_out: record.checkOut?.toISOString(),
         hours_worked: record.hoursWorked || 0,
@@ -99,21 +129,60 @@ export const useAttendance = (employeeId: string) => {
         has_used_break: record.hasUsedBreak || false,
       };
 
+      // Try Supabase first
       const { error } = await supabase
         .from('attendance_records')
         .upsert(attendanceData, {
           onConflict: 'employee_id,date'
         });
 
-      if (error) throw error;
+      if (!error) {
+        // Reload data to get the latest state
+        await loadAttendanceData();
+        return { success: true };
+      } else {
+        throw error;
+      }
+    } catch (error) {
+      console.error('Supabase save failed, using localStorage:', error);
+      
+      // Fallback to localStorage
+      const today = new Date().toISOString().split('T')[0];
+      const attendanceRecord: AttendanceRecord = {
+        id: `attendance_${employeeId}_${today}`,
+        employeeId,
+        date: record.date || today,
+        checkIn: record.checkIn,
+        checkOut: record.checkOut,
+        hoursWorked: record.hoursWorked || 0,
+        breakStart: record.breakStart,
+        breakEnd: record.breakEnd,
+        totalBreakTime: record.totalBreakTime || 0,
+        isOnBreak: record.isOnBreak || false,
+        hasUsedBreak: record.hasUsedBreak || false,
+      };
 
-      // Reload data to get the latest state
-      await loadAttendanceData();
+      // Save to localStorage
+      localStorage.setItem(`attendance_${employeeId}_${today}`, JSON.stringify(attendanceRecord));
+      
+      // Update history
+      const historyKey = `attendance_history_${employeeId}`;
+      const existingHistory = localStorage.getItem(historyKey);
+      let history = existingHistory ? JSON.parse(existingHistory) : [];
+      
+      // Remove existing record for today and add new one
+      history = history.filter((h: AttendanceRecord) => h.date !== today);
+      history.unshift(attendanceRecord);
+      
+      // Keep only last 30 records
+      history = history.slice(0, 30);
+      localStorage.setItem(historyKey, JSON.stringify(history));
+      
+      // Update state
+      setTodayAttendance(attendanceRecord);
+      setAttendanceHistory(history);
       
       return { success: true };
-    } catch (error) {
-      console.error('Error saving attendance:', error);
-      return { success: false, error };
     }
   };
 

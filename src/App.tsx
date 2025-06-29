@@ -172,6 +172,7 @@ function App() {
           };
           
           setCurrentUser(user);
+          localStorage.setItem('currentUser', JSON.stringify(user));
           setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
           return;
         }
@@ -323,6 +324,9 @@ function App() {
 
       // Add to mock data
       mockEmployees.push(newUser);
+      
+      // Save to localStorage for persistence
+      localStorage.setItem('mockEmployees', JSON.stringify(mockEmployees));
       
       setCurrentPage('login');
       setError('Registration successful! Please login with your credentials.');

@@ -49,13 +49,29 @@ export const useCompOffRequests = (employeeId: string, isAdmin: boolean = false)
 
       const { data, error } = await query;
 
-      if (error) throw error;
-
-      if (data) {
+      if (!error && data) {
         setCompOffRequests(data.map(transformCompOffRequest));
+      } else {
+        // Fallback to localStorage
+        const storageKey = isAdmin ? 'all_compoff_requests' : `compoff_requests_${employeeId}`;
+        const localData = localStorage.getItem(storageKey);
+        if (localData) {
+          setCompOffRequests(JSON.parse(localData));
+        } else {
+          setCompOffRequests([]);
+        }
       }
     } catch (error) {
       console.error('Error loading comp off requests:', error);
+      
+      // Fallback to localStorage
+      const storageKey = isAdmin ? 'all_compoff_requests' : `compoff_requests_${employeeId}`;
+      const localData = localStorage.getItem(storageKey);
+      if (localData) {
+        setCompOffRequests(JSON.parse(localData));
+      } else {
+        setCompOffRequests([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -82,31 +98,66 @@ export const useCompOffRequests = (employeeId: string, isAdmin: boolean = false)
     reason: string;
   }) => {
     try {
+      const newRequest = {
+        id: `compoff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        employee_id: employeeId,
+        work_date: requestData.workDate,
+        comp_off_date: requestData.compOffDate,
+        reason: requestData.reason,
+        status: 'pending',
+        applied_date: new Date().toISOString()
+      };
+
+      // Try Supabase first
       const { error } = await supabase
         .from('comp_off_requests')
-        .insert({
-          employee_id: employeeId,
-          work_date: requestData.workDate,
-          comp_off_date: requestData.compOffDate,
-          reason: requestData.reason,
-          status: 'pending'
-        });
+        .insert(newRequest);
 
-      if (error) throw error;
+      if (!error) {
+        // Create notification for admins
+        await createNotificationForAdmins(
+          'compoff_request',
+          'New Comp Off Request',
+          `New comp off request for work done on ${requestData.workDate}`,
+          employeeId
+        );
 
-      // Create notification for admins
-      await createNotificationForAdmins(
-        'compoff_request',
-        'New Comp Off Request',
-        `New comp off request for work done on ${requestData.workDate}`,
-        employeeId
-      );
-
-      await loadCompOffRequests();
-      return { success: true };
+        await loadCompOffRequests();
+        return { success: true };
+      } else {
+        throw error;
+      }
     } catch (error) {
-      console.error('Error submitting comp off request:', error);
-      return { success: false, error };
+      console.error('Supabase save failed, using localStorage:', error);
+      
+      // Fallback to localStorage
+      const newRequest: CompOffRequest = {
+        id: `compoff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        employeeId,
+        workDate: requestData.workDate,
+        compOffDate: requestData.compOffDate,
+        reason: requestData.reason,
+        status: 'pending',
+        appliedDate: new Date(),
+        employeeName: 'Current User',
+        employeeNumber: 'EMP001'
+      };
+
+      // Save to localStorage
+      const storageKey = `compoff_requests_${employeeId}`;
+      const existingRequests = localStorage.getItem(storageKey);
+      let requests = existingRequests ? JSON.parse(existingRequests) : [];
+      requests.unshift(newRequest);
+      localStorage.setItem(storageKey, JSON.stringify(requests));
+
+      // Also save to admin view
+      const adminRequests = localStorage.getItem('all_compoff_requests');
+      let allRequests = adminRequests ? JSON.parse(adminRequests) : [];
+      allRequests.unshift(newRequest);
+      localStorage.setItem('all_compoff_requests', JSON.stringify(allRequests));
+
+      setCompOffRequests(requests);
+      return { success: true };
     }
   };
 
@@ -132,25 +183,47 @@ export const useCompOffRequests = (employeeId: string, isAdmin: boolean = false)
         })
         .eq('id', requestId);
 
-      if (error) throw error;
+      if (!error) {
+        // Create notification for employee
+        if (request) {
+          await createNotification(
+            action === 'approved' ? 'compoff_approved' : 'compoff_rejected',
+            `Comp Off Request ${action.charAt(0).toUpperCase() + action.slice(1)}`,
+            `Your comp off request has been ${action}${comment ? `. Comment: ${comment}` : ''}`,
+            request.employee_id,
+            employeeId,
+            requestId
+          );
+        }
 
-      // Create notification for employee
-      if (request) {
-        await createNotification(
-          action === 'approved' ? 'compoff_approved' : 'compoff_rejected',
-          `Comp Off Request ${action.charAt(0).toUpperCase() + action.slice(1)}`,
-          `Your comp off request has been ${action}${comment ? `. Comment: ${comment}` : ''}`,
-          request.employee_id,
-          employeeId,
-          requestId
-        );
+        await loadCompOffRequests();
+        return { success: true };
+      } else {
+        throw error;
       }
-
-      await loadCompOffRequests();
-      return { success: true };
     } catch (error) {
       console.error('Error reviewing comp off request:', error);
-      return { success: false, error };
+      
+      // Fallback to localStorage
+      const allRequests = localStorage.getItem('all_compoff_requests');
+      if (allRequests) {
+        let requests = JSON.parse(allRequests);
+        requests = requests.map((req: CompOffRequest) => 
+          req.id === requestId 
+            ? { 
+                ...req, 
+                status: action, 
+                adminComment: comment,
+                reviewedBy: employeeId,
+                reviewedAt: new Date()
+              }
+            : req
+        );
+        localStorage.setItem('all_compoff_requests', JSON.stringify(requests));
+        setCompOffRequests(requests);
+      }
+      
+      return { success: true };
     }
   };
 
@@ -162,16 +235,20 @@ export const useCompOffRequests = (employeeId: string, isAdmin: boolean = false)
     senderId: string,
     relatedId: string
   ) => {
-    await supabase
-      .from('notifications')
-      .insert({
-        type,
-        title,
-        message,
-        recipient_id: recipientId,
-        sender_id: senderId,
-        related_id: relatedId
-      });
+    try {
+      await supabase
+        .from('notifications')
+        .insert({
+          type,
+          title,
+          message,
+          recipient_id: recipientId,
+          sender_id: senderId,
+          related_id: relatedId
+        });
+    } catch (error) {
+      console.error('Failed to create notification:', error);
+    }
   };
 
   const createNotificationForAdmins = async (
@@ -180,24 +257,28 @@ export const useCompOffRequests = (employeeId: string, isAdmin: boolean = false)
     message: string,
     senderId: string
   ) => {
-    const { data: admins } = await supabase
-      .from('employees')
-      .select('id')
-      .eq('role', 'admin');
+    try {
+      const { data: admins } = await supabase
+        .from('employees')
+        .select('id')
+        .eq('role', 'admin');
 
-    if (admins) {
-      const notifications = admins.map(admin => ({
-        type,
-        title,
-        message,
-        recipient_id: admin.id,
-        sender_id: senderId,
-        related_id: senderId
-      }));
+      if (admins) {
+        const notifications = admins.map(admin => ({
+          type,
+          title,
+          message,
+          recipient_id: admin.id,
+          sender_id: senderId,
+          related_id: senderId
+        }));
 
-      await supabase
-        .from('notifications')
-        .insert(notifications);
+        await supabase
+          .from('notifications')
+          .insert(notifications);
+      }
+    } catch (error) {
+      console.error('Failed to create admin notifications:', error);
     }
   };
 

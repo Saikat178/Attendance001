@@ -37,21 +37,42 @@ export const useNotifications = (userId: string) => {
     try {
       setLoading(true);
       
+      // Try Supabase first
       const { data, error } = await supabase
         .from('notifications')
         .select('*')
         .eq('recipient_id', userId)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-
-      if (data) {
+      if (!error && data) {
         const transformedNotifications = data.map(transformNotification);
         setNotifications(transformedNotifications);
         setUnreadCount(transformedNotifications.filter(n => !n.isRead).length);
+      } else {
+        // Fallback to localStorage
+        const localNotifications = localStorage.getItem(`notifications_${userId}`);
+        if (localNotifications) {
+          const notifications = JSON.parse(localNotifications);
+          setNotifications(notifications);
+          setUnreadCount(notifications.filter((n: Notification) => !n.isRead).length);
+        } else {
+          setNotifications([]);
+          setUnreadCount(0);
+        }
       }
     } catch (error) {
       console.error('Error loading notifications:', error);
+      
+      // Fallback to localStorage
+      const localNotifications = localStorage.getItem(`notifications_${userId}`);
+      if (localNotifications) {
+        const notifications = JSON.parse(localNotifications);
+        setNotifications(notifications);
+        setUnreadCount(notifications.filter((n: Notification) => !n.isRead).length);
+      } else {
+        setNotifications([]);
+        setUnreadCount(0);
+      }
     } finally {
       setLoading(false);
     }
@@ -72,47 +93,88 @@ export const useNotifications = (userId: string) => {
 
   const markAsRead = async (notificationId: string) => {
     try {
+      // Try Supabase first
       const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
         .eq('id', notificationId);
 
-      if (error) throw error;
-
-      await loadNotifications();
+      if (!error) {
+        await loadNotifications();
+      } else {
+        throw error;
+      }
     } catch (error) {
       console.error('Error marking notification as read:', error);
+      
+      // Fallback to localStorage
+      const localNotifications = localStorage.getItem(`notifications_${userId}`);
+      if (localNotifications) {
+        let notifications = JSON.parse(localNotifications);
+        notifications = notifications.map((n: Notification) => 
+          n.id === notificationId ? { ...n, isRead: true } : n
+        );
+        localStorage.setItem(`notifications_${userId}`, JSON.stringify(notifications));
+        setNotifications(notifications);
+        setUnreadCount(notifications.filter((n: Notification) => !n.isRead).length);
+      }
     }
   };
 
   const markAllAsRead = async () => {
     try {
+      // Try Supabase first
       const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
         .eq('recipient_id', userId)
         .eq('is_read', false);
 
-      if (error) throw error;
-
-      await loadNotifications();
+      if (!error) {
+        await loadNotifications();
+      } else {
+        throw error;
+      }
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
+      
+      // Fallback to localStorage
+      const localNotifications = localStorage.getItem(`notifications_${userId}`);
+      if (localNotifications) {
+        let notifications = JSON.parse(localNotifications);
+        notifications = notifications.map((n: Notification) => ({ ...n, isRead: true }));
+        localStorage.setItem(`notifications_${userId}`, JSON.stringify(notifications));
+        setNotifications(notifications);
+        setUnreadCount(0);
+      }
     }
   };
 
   const deleteNotification = async (notificationId: string) => {
     try {
+      // Try Supabase first
       const { error } = await supabase
         .from('notifications')
         .delete()
         .eq('id', notificationId);
 
-      if (error) throw error;
-
-      await loadNotifications();
+      if (!error) {
+        await loadNotifications();
+      } else {
+        throw error;
+      }
     } catch (error) {
       console.error('Error deleting notification:', error);
+      
+      // Fallback to localStorage
+      const localNotifications = localStorage.getItem(`notifications_${userId}`);
+      if (localNotifications) {
+        let notifications = JSON.parse(localNotifications);
+        notifications = notifications.filter((n: Notification) => n.id !== notificationId);
+        localStorage.setItem(`notifications_${userId}`, JSON.stringify(notifications));
+        setNotifications(notifications);
+        setUnreadCount(notifications.filter((n: Notification) => !n.isRead).length);
+      }
     }
   };
 
