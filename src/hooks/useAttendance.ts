@@ -37,26 +37,36 @@ export const useAttendance = (employeeId: string) => {
     try {
       setLoading(true);
       
-      // Get today's attendance
-      const today = new Date().toISOString().split('T')[0];
-      
-      // Try Supabase first
+      // Get today's attendance using the new database function
       const { data: todayData, error: todayError } = await supabase
-        .from('attendance_records')
-        .select('*')
-        .eq('employee_id', employeeId)
-        .eq('date', today)
-        .maybeSingle();
+        .rpc('get_today_attendance', { p_employee_id: employeeId });
 
-      if (!todayError && todayData) {
-        setTodayAttendance(transformAttendanceRecord(todayData));
-      } else {
-        // Fallback to localStorage
-        const localAttendance = localStorage.getItem(`attendance_${employeeId}_${today}`);
-        if (localAttendance) {
-          setTodayAttendance(JSON.parse(localAttendance));
+      if (!todayError && todayData && todayData.success) {
+        if (todayData.exists) {
+          setTodayAttendance(transformAttendanceRecord(todayData.data));
         } else {
           setTodayAttendance(null);
+        }
+      } else {
+        // Fallback to direct query
+        const today = new Date().toISOString().split('T')[0];
+        const { data: directData, error: directError } = await supabase
+          .from('attendance_records')
+          .select('*')
+          .eq('employee_id', employeeId)
+          .eq('date', today)
+          .maybeSingle();
+
+        if (!directError && directData) {
+          setTodayAttendance(transformAttendanceRecord(directData));
+        } else {
+          // Fallback to localStorage
+          const localAttendance = localStorage.getItem(`attendance_${employeeId}_${today}`);
+          if (localAttendance) {
+            setTodayAttendance(JSON.parse(localAttendance));
+          } else {
+            setTodayAttendance(null);
+          }
         }
       }
 
@@ -112,57 +122,39 @@ export const useAttendance = (employeeId: string) => {
     hasUsedBreak: data.has_used_break || false,
   });
 
-  const saveAttendance = async (record: Partial<AttendanceRecord>) => {
+  const checkIn = async () => {
     try {
-      const today = new Date().toISOString().split('T')[0];
-      
-      const attendanceData = {
-        employee_id: employeeId,
-        date: record.date || today,
-        check_in: record.checkIn?.toISOString(),
-        check_out: record.checkOut?.toISOString(),
-        hours_worked: record.hoursWorked || 0,
-        break_start: record.breakStart?.toISOString(),
-        break_end: record.breakEnd?.toISOString(),
-        total_break_time: record.totalBreakTime || 0,
-        is_on_break: record.isOnBreak || false,
-        has_used_break: record.hasUsedBreak || false,
-      };
+      // Use the dedicated database function for check-in
+      const { data, error } = await supabase
+        .rpc('record_check_in', { p_employee_id: employeeId });
 
-      // Try Supabase first
-      const { error } = await supabase
-        .from('attendance_records')
-        .upsert(attendanceData, {
-          onConflict: 'employee_id,date'
-        });
+      if (error) throw error;
 
-      if (!error) {
+      if (data && data.success) {
         // Reload data to get the latest state
         await loadAttendanceData();
         return { success: true };
       } else {
-        throw error;
+        throw new Error(data?.message || 'Check-in failed');
       }
     } catch (error) {
-      console.error('Supabase save failed, using localStorage:', error);
+      console.error('Check-in error:', error);
       
       // Fallback to localStorage
-      const today = new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      
       const attendanceRecord: AttendanceRecord = {
         id: `attendance_${employeeId}_${today}`,
         employeeId,
-        date: record.date || today,
-        checkIn: record.checkIn,
-        checkOut: record.checkOut,
-        hoursWorked: record.hoursWorked || 0,
-        breakStart: record.breakStart,
-        breakEnd: record.breakEnd,
-        totalBreakTime: record.totalBreakTime || 0,
-        isOnBreak: record.isOnBreak || false,
-        hasUsedBreak: record.hasUsedBreak || false,
+        date: today,
+        checkIn: now,
+        hoursWorked: 0,
+        totalBreakTime: 0,
+        isOnBreak: false,
+        hasUsedBreak: false,
       };
 
-      // Save to localStorage
       localStorage.setItem(`attendance_${employeeId}_${today}`, JSON.stringify(attendanceRecord));
       
       // Update history
@@ -170,15 +162,11 @@ export const useAttendance = (employeeId: string) => {
       const existingHistory = localStorage.getItem(historyKey);
       let history = existingHistory ? JSON.parse(existingHistory) : [];
       
-      // Remove existing record for today and add new one
       history = history.filter((h: AttendanceRecord) => h.date !== today);
       history.unshift(attendanceRecord);
-      
-      // Keep only last 30 records
       history = history.slice(0, 30);
       localStorage.setItem(historyKey, JSON.stringify(history));
       
-      // Update state
       setTodayAttendance(attendanceRecord);
       setAttendanceHistory(history);
       
@@ -186,76 +174,171 @@ export const useAttendance = (employeeId: string) => {
     }
   };
 
-  const checkIn = async () => {
-    const now = new Date();
-    const today = now.toISOString().split('T')[0];
-    
-    return await saveAttendance({
-      date: today,
-      checkIn: now,
-      hoursWorked: 0,
-      totalBreakTime: 0,
-      isOnBreak: false,
-      hasUsedBreak: false
-    });
-  };
-
   const checkOut = async () => {
-    if (!todayAttendance?.checkIn) {
-      return { success: false, error: 'No check-in record found' };
-    }
+    try {
+      // Use the dedicated database function for check-out
+      const { data, error } = await supabase
+        .rpc('record_check_out', { p_employee_id: employeeId });
 
-    const now = new Date();
-    let totalBreakTime = todayAttendance.totalBreakTime;
-    
-    // If currently on break, end the break
-    if (todayAttendance.isOnBreak && todayAttendance.breakStart) {
-      const breakDuration = (now.getTime() - todayAttendance.breakStart.getTime()) / (1000 * 60);
-      totalBreakTime += breakDuration;
+      if (error) throw error;
+
+      if (data && data.success) {
+        // Reload data to get the latest state
+        await loadAttendanceData();
+        return { success: true };
+      } else {
+        throw new Error(data?.message || 'Check-out failed');
+      }
+    } catch (error) {
+      console.error('Check-out error:', error);
+      
+      // Fallback to localStorage
+      if (!todayAttendance?.checkIn) {
+        return { success: false, error: 'No check-in record found' };
+      }
+
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      let totalBreakTime = todayAttendance.totalBreakTime;
+      
+      // If currently on break, end the break
+      if (todayAttendance.isOnBreak && todayAttendance.breakStart) {
+        const breakDuration = (now.getTime() - todayAttendance.breakStart.getTime()) / (1000 * 60);
+        totalBreakTime += breakDuration;
+      }
+      
+      const hoursWorked = (now.getTime() - todayAttendance.checkIn.getTime()) / (1000 * 60 * 60) - (totalBreakTime / 60);
+      
+      const updatedRecord = {
+        ...todayAttendance,
+        checkOut: now,
+        hoursWorked: Math.max(0, hoursWorked),
+        totalBreakTime,
+        isOnBreak: false,
+        breakEnd: todayAttendance.isOnBreak ? now : todayAttendance.breakEnd
+      };
+      
+      localStorage.setItem(`attendance_${employeeId}_${today}`, JSON.stringify(updatedRecord));
+      
+      // Update history
+      const historyKey = `attendance_history_${employeeId}`;
+      const existingHistory = localStorage.getItem(historyKey);
+      let history = existingHistory ? JSON.parse(existingHistory) : [];
+      
+      history = history.filter((h: AttendanceRecord) => h.date !== today);
+      history.unshift(updatedRecord);
+      localStorage.setItem(historyKey, JSON.stringify(history));
+      
+      setTodayAttendance(updatedRecord);
+      setAttendanceHistory(history);
+      
+      return { success: true };
     }
-    
-    const hoursWorked = (now.getTime() - todayAttendance.checkIn.getTime()) / (1000 * 60 * 60) - (totalBreakTime / 60);
-    
-    return await saveAttendance({
-      ...todayAttendance,
-      checkOut: now,
-      hoursWorked: Math.max(0, hoursWorked),
-      totalBreakTime,
-      isOnBreak: false,
-      breakEnd: now
-    });
   };
 
   const startBreak = async () => {
-    if (!todayAttendance?.checkIn || todayAttendance.checkOut || todayAttendance.hasUsedBreak) {
-      return { success: false, error: 'Cannot start break' };
-    }
+    try {
+      // Use the dedicated database function for starting break
+      const { data, error } = await supabase
+        .rpc('record_break_start', { p_employee_id: employeeId });
 
-    const now = new Date();
-    return await saveAttendance({
-      ...todayAttendance,
-      breakStart: now,
-      isOnBreak: true,
-      hasUsedBreak: true
-    });
+      if (error) throw error;
+
+      if (data && data.success) {
+        // Reload data to get the latest state
+        await loadAttendanceData();
+        return { success: true };
+      } else {
+        throw new Error(data?.message || 'Failed to start break');
+      }
+    } catch (error) {
+      console.error('Start break error:', error);
+      
+      // Fallback to localStorage
+      if (!todayAttendance?.checkIn || todayAttendance.checkOut || todayAttendance.hasUsedBreak) {
+        return { success: false, error: 'Cannot start break' };
+      }
+
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      
+      const updatedRecord = {
+        ...todayAttendance,
+        breakStart: now,
+        isOnBreak: true,
+        hasUsedBreak: true
+      };
+      
+      localStorage.setItem(`attendance_${employeeId}_${today}`, JSON.stringify(updatedRecord));
+      
+      // Update history
+      const historyKey = `attendance_history_${employeeId}`;
+      const existingHistory = localStorage.getItem(historyKey);
+      let history = existingHistory ? JSON.parse(existingHistory) : [];
+      
+      history = history.filter((h: AttendanceRecord) => h.date !== today);
+      history.unshift(updatedRecord);
+      localStorage.setItem(historyKey, JSON.stringify(history));
+      
+      setTodayAttendance(updatedRecord);
+      setAttendanceHistory(history);
+      
+      return { success: true };
+    }
   };
 
   const endBreak = async () => {
-    if (!todayAttendance?.breakStart || !todayAttendance.isOnBreak) {
-      return { success: false, error: 'No active break found' };
+    try {
+      // Use the dedicated database function for ending break
+      const { data, error } = await supabase
+        .rpc('record_break_end', { p_employee_id: employeeId });
+
+      if (error) throw error;
+
+      if (data && data.success) {
+        // Reload data to get the latest state
+        await loadAttendanceData();
+        return { success: true };
+      } else {
+        throw new Error(data?.message || 'Failed to end break');
+      }
+    } catch (error) {
+      console.error('End break error:', error);
+      
+      // Fallback to localStorage
+      if (!todayAttendance?.breakStart || !todayAttendance.isOnBreak) {
+        return { success: false, error: 'No active break found' };
+      }
+
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      const breakDuration = (now.getTime() - todayAttendance.breakStart.getTime()) / (1000 * 60);
+      const totalBreakTime = todayAttendance.totalBreakTime + breakDuration;
+
+      const updatedRecord = {
+        ...todayAttendance,
+        breakEnd: now,
+        totalBreakTime,
+        isOnBreak: false,
+        breakStart: undefined
+      };
+      
+      localStorage.setItem(`attendance_${employeeId}_${today}`, JSON.stringify(updatedRecord));
+      
+      // Update history
+      const historyKey = `attendance_history_${employeeId}`;
+      const existingHistory = localStorage.getItem(historyKey);
+      let history = existingHistory ? JSON.parse(existingHistory) : [];
+      
+      history = history.filter((h: AttendanceRecord) => h.date !== today);
+      history.unshift(updatedRecord);
+      localStorage.setItem(historyKey, JSON.stringify(history));
+      
+      setTodayAttendance(updatedRecord);
+      setAttendanceHistory(history);
+      
+      return { success: true };
     }
-
-    const now = new Date();
-    const breakDuration = (now.getTime() - todayAttendance.breakStart.getTime()) / (1000 * 60);
-    const totalBreakTime = todayAttendance.totalBreakTime + breakDuration;
-
-    return await saveAttendance({
-      ...todayAttendance,
-      breakEnd: now,
-      totalBreakTime,
-      isOnBreak: false,
-      breakStart: undefined
-    });
   };
 
   return {
@@ -266,7 +349,6 @@ export const useAttendance = (employeeId: string) => {
     checkOut,
     startBreak,
     endBreak,
-    saveAttendance,
     refreshData: loadAttendanceData
   };
 };

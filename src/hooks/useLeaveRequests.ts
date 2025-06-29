@@ -100,68 +100,82 @@ export const useLeaveRequests = (employeeId: string, isAdmin: boolean = false) =
     reason: string;
   }) => {
     try {
-      const newRequest = {
-        id: `leave_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        employee_id: employeeId,
-        type: requestData.type,
-        start_date: requestData.startDate,
-        end_date: requestData.endDate,
-        reason: requestData.reason,
-        status: 'pending',
-        applied_date: new Date().toISOString()
-      };
+      // Use the dedicated database function for submitting leave request
+      const { data, error } = await supabase
+        .rpc('submit_leave_request', {
+          p_employee_id: employeeId,
+          p_type: requestData.type,
+          p_start_date: requestData.startDate,
+          p_end_date: requestData.endDate,
+          p_reason: requestData.reason
+        });
 
-      // Try Supabase first
-      const { error } = await supabase
-        .from('leave_requests')
-        .insert(newRequest);
+      if (error) throw error;
 
-      if (!error) {
-        // Create notification for admins
-        await createNotificationForAdmins(
-          'leave_request',
-          'New Leave Request',
-          `New ${requestData.type} leave request submitted`,
-          employeeId
-        );
-
+      if (data && data.success) {
+        // Reload data to get the latest state
         await loadLeaveRequests();
         return { success: true };
       } else {
-        throw error;
+        throw new Error(data?.message || 'Failed to submit leave request');
       }
     } catch (error) {
-      console.error('Supabase save failed, using localStorage:', error);
+      console.error('Leave request error:', error);
       
-      // Fallback to localStorage
-      const newRequest: LeaveRequest = {
-        id: `leave_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        employeeId,
-        type: requestData.type,
-        startDate: requestData.startDate,
-        endDate: requestData.endDate,
-        reason: requestData.reason,
-        status: 'pending',
-        appliedDate: new Date(),
-        employeeName: 'Current User',
-        employeeNumber: 'EMP001'
-      };
+      // Fallback to direct database insert
+      try {
+        const newRequest = {
+          id: crypto.randomUUID(),
+          employee_id: employeeId,
+          type: requestData.type,
+          start_date: requestData.startDate,
+          end_date: requestData.endDate,
+          reason: requestData.reason,
+          status: 'pending',
+          applied_date: new Date().toISOString()
+        };
 
-      // Save to localStorage
-      const storageKey = `leave_requests_${employeeId}`;
-      const existingRequests = localStorage.getItem(storageKey);
-      let requests = existingRequests ? JSON.parse(existingRequests) : [];
-      requests.unshift(newRequest);
-      localStorage.setItem(storageKey, JSON.stringify(requests));
+        const { error: insertError } = await supabase
+          .from('leave_requests')
+          .insert(newRequest);
 
-      // Also save to admin view
-      const adminRequests = localStorage.getItem('all_leave_requests');
-      let allRequests = adminRequests ? JSON.parse(adminRequests) : [];
-      allRequests.unshift(newRequest);
-      localStorage.setItem('all_leave_requests', JSON.stringify(allRequests));
+        if (insertError) throw insertError;
 
-      setLeaveRequests(requests);
-      return { success: true };
+        await loadLeaveRequests();
+        return { success: true };
+      } catch (directError) {
+        console.error('Direct insert failed, using localStorage:', directError);
+        
+        // Fallback to localStorage
+        const newRequest: LeaveRequest = {
+          id: crypto.randomUUID(),
+          employeeId,
+          type: requestData.type,
+          startDate: requestData.startDate,
+          endDate: requestData.endDate,
+          reason: requestData.reason,
+          status: 'pending',
+          appliedDate: new Date(),
+          employeeName: 'Current User',
+          employeeNumber: 'EMP001'
+        };
+
+        // Save to localStorage
+        const storageKey = `leave_requests_${employeeId}`;
+        const existingRequests = localStorage.getItem(storageKey);
+        let requests = existingRequests ? JSON.parse(existingRequests) : [];
+        requests.unshift(newRequest);
+        localStorage.setItem(storageKey, JSON.stringify(requests));
+
+        // Also save to admin view
+        const adminRequests = localStorage.getItem('all_leave_requests');
+        let allRequests = adminRequests ? JSON.parse(adminRequests) : [];
+        allRequests.unshift(newRequest);
+        localStorage.setItem('all_leave_requests', JSON.stringify(allRequests));
+
+        setLeaveRequests(requests);
+        return { success: true };
+      }
     }
   };
 
@@ -171,118 +185,67 @@ export const useLeaveRequests = (employeeId: string, isAdmin: boolean = false) =
     comment?: string
   ) => {
     try {
-      const { data: request } = await supabase
-        .from('leave_requests')
-        .select('employee_id')
-        .eq('id', requestId)
-        .single();
+      // Use the dedicated database function for reviewing leave request
+      const { data, error } = await supabase
+        .rpc('review_leave_request', {
+          p_request_id: requestId,
+          p_status: action,
+          p_admin_comment: comment,
+          p_reviewed_by: employeeId
+        });
 
-      const { error } = await supabase
-        .from('leave_requests')
-        .update({
-          status: action,
-          admin_comment: comment,
-          reviewed_by: employeeId,
-          reviewed_at: new Date().toISOString()
-        })
-        .eq('id', requestId);
+      if (error) throw error;
 
-      if (!error) {
-        // Create notification for employee
-        if (request) {
-          await createNotification(
-            action === 'approved' ? 'leave_approved' : 'leave_rejected',
-            `Leave Request ${action.charAt(0).toUpperCase() + action.slice(1)}`,
-            `Your leave request has been ${action}${comment ? `. Comment: ${comment}` : ''}`,
-            request.employee_id,
-            employeeId,
-            requestId
-          );
-        }
-
+      if (data && data.success) {
+        // Reload data to get the latest state
         await loadLeaveRequests();
         return { success: true };
       } else {
-        throw error;
+        throw new Error(data?.message || 'Failed to review leave request');
       }
     } catch (error) {
       console.error('Error reviewing leave request:', error);
       
-      // Fallback to localStorage
-      const allRequests = localStorage.getItem('all_leave_requests');
-      if (allRequests) {
-        let requests = JSON.parse(allRequests);
-        requests = requests.map((req: LeaveRequest) => 
-          req.id === requestId 
-            ? { 
-                ...req, 
-                status: action, 
-                adminComment: comment,
-                reviewedBy: employeeId,
-                reviewedAt: new Date()
-              }
-            : req
-        );
-        localStorage.setItem('all_leave_requests', JSON.stringify(requests));
-        setLeaveRequests(requests);
+      // Fallback to direct database update
+      try {
+        const { error: updateError } = await supabase
+          .from('leave_requests')
+          .update({
+            status: action,
+            admin_comment: comment,
+            reviewed_by: employeeId,
+            reviewed_at: new Date().toISOString()
+          })
+          .eq('id', requestId);
+
+        if (updateError) throw updateError;
+
+        await loadLeaveRequests();
+        return { success: true };
+      } catch (directError) {
+        console.error('Direct update failed, using localStorage:', directError);
+        
+        // Fallback to localStorage
+        const allRequests = localStorage.getItem('all_leave_requests');
+        if (allRequests) {
+          let requests = JSON.parse(allRequests);
+          requests = requests.map((req: LeaveRequest) => 
+            req.id === requestId 
+              ? { 
+                  ...req, 
+                  status: action, 
+                  adminComment: comment,
+                  reviewedBy: employeeId,
+                  reviewedAt: new Date()
+                }
+              : req
+          );
+          localStorage.setItem('all_leave_requests', JSON.stringify(requests));
+          setLeaveRequests(requests);
+        }
+        
+        return { success: true };
       }
-      
-      return { success: true };
-    }
-  };
-
-  const createNotification = async (
-    type: string,
-    title: string,
-    message: string,
-    recipientId: string,
-    senderId: string,
-    relatedId: string
-  ) => {
-    try {
-      await supabase
-        .from('notifications')
-        .insert({
-          type,
-          title,
-          message,
-          recipient_id: recipientId,
-          sender_id: senderId,
-          related_id: relatedId
-        });
-    } catch (error) {
-      console.error('Failed to create notification:', error);
-    }
-  };
-
-  const createNotificationForAdmins = async (
-    type: string,
-    title: string,
-    message: string,
-    senderId: string
-  ) => {
-    try {
-      const { data: admins } = await supabase
-        .from('employees')
-        .select('id')
-        .eq('role', 'admin');
-
-      if (admins) {
-        const notifications = admins.map(admin => ({
-          type,
-          title,
-          message,
-          recipient_id: admin.id,
-          sender_id: senderId,
-          related_id: senderId
-        }));
-
-        await supabase
-          .from('notifications')
-          .insert(notifications);
-      }
-    } catch (error) {
-      console.error('Failed to create admin notifications:', error);
     }
   };
 
