@@ -19,27 +19,38 @@ function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
   const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [connectionError, setConnectionError] = useState<string>('');
+  const [connectionMode, setConnectionMode] = useState<string>('');
   const { user, employee, loading, error, signIn, signUp, signOut, clearError } = useAuth();
 
   // Check database connection on app start
   useEffect(() => {
     const checkConnection = async () => {
       try {
-        console.log('Checking Supabase connection...');
-        const { connected, error } = await checkSupabaseConnection();
+        console.log('🔍 Checking Supabase connection...');
+        const { connected, error, mode } = await checkSupabaseConnection();
+        
+        setConnectionMode(mode || 'unknown');
         
         if (connected) {
-          console.log('✅ Supabase connection successful');
+          console.log(`✅ Connection established (${mode})`);
           setConnectionStatus('connected');
+          
+          if (mode === 'mock') {
+            console.warn('⚠️ Running in mock mode - Supabase not configured');
+          } else if (mode === 'degraded') {
+            console.warn('⚠️ Running in degraded mode - some features may not work');
+          }
         } else {
-          console.error('❌ Supabase connection failed:', error);
+          console.error('❌ Connection failed:', error);
           setConnectionStatus('error');
           setConnectionError(error?.message || 'Database connection failed');
         }
       } catch (err: any) {
         console.error('❌ Connection check error:', err);
-        setConnectionStatus('error');
-        setConnectionError(err.message || 'Failed to check database connection');
+        // Don't block the app - allow it to proceed
+        setConnectionStatus('connected');
+        setConnectionMode('offline');
+        console.warn('⚠️ Proceeding in offline mode');
       }
     };
     
@@ -48,13 +59,14 @@ function App() {
       if (connectionStatus === 'checking') {
         console.warn('⚠️ Connection check timeout, proceeding anyway');
         setConnectionStatus('connected');
+        setConnectionMode('timeout');
       }
-    }, 10000); // 10 second timeout
+    }, 5000); // 5 second timeout
 
     checkConnection();
 
     return () => clearTimeout(timeoutId);
-  }, [connectionStatus]);
+  }, []);
 
   useEffect(() => {
     // Skip landing page if user is already authenticated
@@ -65,7 +77,7 @@ function App() {
       if (currentPage === 'landing') {
         const timer = setTimeout(() => {
           setCurrentPage('login');
-        }, 5000);
+        }, 3000); // Reduced from 5 seconds
         return () => clearTimeout(timer);
       }
     }
@@ -147,8 +159,8 @@ function App() {
     setCurrentPage('login');
   };
 
-  // Show connection error if database is not accessible
-  if (connectionStatus === 'error') {
+  // Show connection error only if it's a real error (not mock/degraded mode)
+  if (connectionStatus === 'error' && connectionMode !== 'mock' && connectionMode !== 'degraded') {
     return (
       <ErrorBoundary>
         <div className="min-h-screen bg-gradient-to-br from-red-50 to-orange-50 flex items-center justify-center p-4">
@@ -176,6 +188,7 @@ function App() {
                 onClick={() => {
                   console.log('Proceeding without connection check...');
                   setConnectionStatus('connected');
+                  setConnectionMode('forced');
                 }}
                 className="w-full bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 font-medium"
               >
@@ -278,6 +291,18 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="App">
+        {/* Connection Status Indicator */}
+        {connectionMode === 'mock' && (
+          <div className="fixed top-0 left-0 right-0 bg-yellow-500 text-white text-center py-1 text-sm z-50">
+            ⚠️ Running in demo mode - Supabase not configured
+          </div>
+        )}
+        {connectionMode === 'degraded' && (
+          <div className="fixed top-0 left-0 right-0 bg-orange-500 text-white text-center py-1 text-sm z-50">
+            ⚠️ Limited functionality - database connection issues
+          </div>
+        )}
+        
         {error && (
           <div className="fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-lg z-50 max-w-sm">
             <div className="flex items-center justify-between">
