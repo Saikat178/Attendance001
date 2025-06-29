@@ -25,7 +25,8 @@ import {
   AlertTriangle,
   CheckCircle,
   RefreshCw,
-  TestTube
+  TestTube,
+  Rocket
 } from 'lucide-react';
 import { Employee } from '../types';
 import { useAuth } from '../hooks/useAuth';
@@ -38,6 +39,7 @@ import Calendar from './Calendar';
 import EmployeeManagement from './EmployeeManagement';
 import SystemStatus from './SystemStatus';
 import TestDashboard from './TestDashboard';
+import DeploymentManager from './DeploymentManager';
 
 interface AdminDashboardProps {
   user: Employee;
@@ -74,6 +76,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [confirmationMessage, setConfirmationMessage] = useState('');
   const [showTestDashboard, setShowTestDashboard] = useState(false);
+  const [showDeploymentManager, setShowDeploymentManager] = useState(false);
 
   // Use hooks for data management
   const { 
@@ -393,25 +396,32 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
             Open Test Dashboard
           </button>
           <button
-            onClick={downloadExcel}
+            onClick={() => setShowDeploymentManager(true)}
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors duration-200 font-medium flex items-center"
           >
+            <Rocket className="w-4 h-4 mr-2" />
+            Deploy to Netlify
+          </button>
+          <button
+            onClick={downloadExcel}
+            className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors duration-200 font-medium flex items-center"
+          >
             <Download className="w-4 h-4 mr-2" />
-            Test Excel Export
+            Export Report
           </button>
           <button
             onClick={() => showConfirmationMessage('🔄 Data refreshed successfully!')}
-            className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors duration-200 font-medium flex items-center"
+            className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors duration-200 font-medium flex items-center"
           >
             <RefreshCw className="w-4 h-4 mr-2" />
-            Test Refresh
+            Refresh Data
           </button>
           <button
             onClick={() => setActiveSection('system-status')}
-            className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors duration-200 font-medium flex items-center"
+            className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 font-medium flex items-center"
           >
             <Eye className="w-4 h-4 mr-2" />
-            View System Status
+            System Status
           </button>
         </div>
       </div>
@@ -900,6 +910,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
       {/* Test Dashboard Modal */}
       {showTestDashboard && (
         <TestDashboard onClose={() => setShowTestDashboard(false)} />
+      )}
+
+      {/* Deployment Manager Modal */}
+      {showDeploymentManager && (
+        <DeploymentManager onClose={() => setShowDeploymentManager(false)} />
       )}
 
       {/* Review Modal */}
