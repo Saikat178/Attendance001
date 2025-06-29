@@ -77,7 +77,7 @@ function App() {
             .from('employees')
             .select('*')
             .eq('id', session.user.id)
-            .single();
+            .maybeSingle();
             
           if (employee && !error) {
             const user: Employee = {
@@ -154,7 +154,7 @@ function App() {
           .from('employees')
           .select('*')
           .eq('id', data.user.id)
-          .single();
+          .maybeSingle();
           
         if (employee && !employeeError && employee.role === role) {
           const user: Employee = {
