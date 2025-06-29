@@ -108,6 +108,8 @@ export interface LeaveRequest {
   adminComment?: string;
   reviewedAt?: Date;
   reviewedBy?: string;
+  employeeName?: string;
+  employeeNumber?: string;
 }
 
 export interface CompOffRequest {
@@ -121,6 +123,8 @@ export interface CompOffRequest {
   adminComment?: string;
   reviewedAt?: Date;
   reviewedBy?: string;
+  employeeName?: string;
+  employeeNumber?: string;
 }
 
 export interface AttendanceStats {

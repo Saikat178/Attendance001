@@ -39,7 +39,7 @@ function App() {
       if (currentPage === 'landing') {
         const timer = setTimeout(() => {
           setCurrentPage('login');
-        }, 3000);
+        }, 5000);
         return () => clearTimeout(timer);
       }
     }
