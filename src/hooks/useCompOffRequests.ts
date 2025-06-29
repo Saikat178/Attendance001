@@ -39,7 +39,7 @@ export const useCompOffRequests = (employeeId: string, isAdmin: boolean = false)
         .from('comp_off_requests')
         .select(`
           *,
-          employee:employees(name, employee_id)
+          employee:employees!comp_off_requests_employee_id_fkey(name, employee_id)
         `)
         .order('applied_date', { ascending: false });
 

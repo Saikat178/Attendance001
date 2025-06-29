@@ -2,6 +2,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoadingSpinner from './components/LoadingSpinner';
 import { Employee } from './types';
+import { supabase } from './lib/supabase';
 
 // Lazy load components for better performance
 const LandingPage = React.lazy(() => import('./components/LandingPage'));
@@ -13,10 +14,23 @@ const AdminDashboard = React.lazy(() => import('./components/AdminDashboard'));
 
 type Page = 'landing' | 'login' | 'signup' | 'admin-signup' | 'employee-dashboard' | 'admin-dashboard';
 
-// Mock data for demo purposes
+// Generate proper UUID
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for older browsers
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
+// Mock data for demo purposes with proper UUIDs
 const mockEmployees: Employee[] = [
   {
-    id: 'emp-1',
+    id: '550e8400-e29b-41d4-a716-446655440001',
     name: 'John Doe',
     email: 'john@company.com',
     employeeId: 'EMP001',
@@ -28,7 +42,7 @@ const mockEmployees: Employee[] = [
     isVerified: true
   },
   {
-    id: 'admin-1',
+    id: '550e8400-e29b-41d4-a716-446655440002',
     name: 'Admin User',
     email: 'admin@company.com',
     employeeId: 'ADMIN001',
@@ -55,11 +69,42 @@ function App() {
         setLoading(true);
         
         // Check for existing session
-        const savedUser = localStorage.getItem('currentUser');
-        if (savedUser) {
-          const user = JSON.parse(savedUser);
-          setCurrentUser(user);
-          setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session?.user) {
+          // Get employee data from database
+          const { data: employee, error } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+            
+          if (employee && !error) {
+            const user: Employee = {
+              id: employee.id,
+              name: employee.name,
+              email: employee.email,
+              employeeId: employee.employee_id,
+              password: '', // Don't store password in state
+              role: employee.role,
+              department: employee.department,
+              position: employee.position,
+              phone: employee.phone,
+              createdAt: new Date(employee.created_at),
+              isVerified: employee.is_verified
+            };
+            
+            setCurrentUser(user);
+            setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+          }
+        } else {
+          // Check localStorage for demo mode
+          const savedUser = localStorage.getItem('currentUser');
+          if (savedUser) {
+            const user = JSON.parse(savedUser);
+            setCurrentUser(user);
+            setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+          }
         }
         
         setIsInitialized(true);
@@ -97,7 +142,42 @@ function App() {
       setLoading(true);
       setError('');
 
-      // Find user by email or employee ID
+      // Try Supabase authentication first
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email: identifier,
+        password: password,
+      });
+
+      if (data.user && !authError) {
+        // Get employee data from database
+        const { data: employee, error: employeeError } = await supabase
+          .from('employees')
+          .select('*')
+          .eq('id', data.user.id)
+          .single();
+          
+        if (employee && !employeeError && employee.role === role) {
+          const user: Employee = {
+            id: employee.id,
+            name: employee.name,
+            email: employee.email,
+            employeeId: employee.employee_id,
+            password: '', // Don't store password in state
+            role: employee.role,
+            department: employee.department,
+            position: employee.position,
+            phone: employee.phone,
+            createdAt: new Date(employee.created_at),
+            isVerified: employee.is_verified
+          };
+          
+          setCurrentUser(user);
+          setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+          return;
+        }
+      }
+
+      // Fallback to mock data for demo
       const user = mockEmployees.find(emp => 
         (emp.email === identifier || emp.employeeId === identifier) && 
         emp.password === password &&
@@ -108,7 +188,7 @@ function App() {
         throw new Error('Invalid credentials or incorrect role selection');
       }
 
-      // Save user session
+      // Save user session for demo mode
       localStorage.setItem('currentUser', JSON.stringify(user));
       setCurrentUser(user);
       setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
@@ -143,7 +223,41 @@ function App() {
       setLoading(true);
       setError('');
 
-      // Check if user already exists
+      // Try to create user in Supabase
+      const { data, error: authError } = await supabase.auth.signUp({
+        email: userData.email,
+        password: userData.password,
+        options: {
+          data: {
+            role: userData.role || 'employee'
+          }
+        }
+      });
+
+      if (data.user && !authError) {
+        // Create employee record
+        const { error: employeeError } = await supabase
+          .from('employees')
+          .insert({
+            id: data.user.id,
+            name: userData.name,
+            email: userData.email,
+            employee_id: userData.employeeId,
+            role: userData.role || 'employee',
+            phone: userData.phone,
+            department: userData.department,
+            position: userData.position,
+            is_verified: true
+          });
+
+        if (!employeeError) {
+          setCurrentPage('login');
+          setError('Registration successful! Please login with your credentials.');
+          return;
+        }
+      }
+
+      // Fallback to mock data for demo
       const existingUser = mockEmployees.find(emp => 
         emp.email === userData.email || emp.employeeId === userData.employeeId
       );
@@ -152,9 +266,9 @@ function App() {
         throw new Error('User with this email or employee ID already exists');
       }
 
-      // Create new user
+      // Create new user with proper UUID
       const newUser: Employee = {
-        id: `user-${Date.now()}`,
+        id: generateUUID(),
         name: userData.name,
         email: userData.email,
         employeeId: userData.employeeId,
@@ -186,6 +300,10 @@ function App() {
   };
 
   const handleLogout = async () => {
+    // Sign out from Supabase
+    await supabase.auth.signOut();
+    
+    // Clear local storage
     localStorage.removeItem('currentUser');
     setCurrentUser(null);
     setCurrentPage('login');
