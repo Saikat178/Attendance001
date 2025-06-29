@@ -18,23 +18,49 @@ type Page = 'landing' | 'login' | 'signup' | 'admin-signup' | 'employee-dashboar
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
   const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'error'>('checking');
+  const [connectionError, setConnectionError] = useState<string>('');
   const { user, employee, loading, error, signIn, signUp, signOut, clearError } = useAuth();
 
   // Check database connection on app start
   useEffect(() => {
     const checkConnection = async () => {
-      const { connected } = await checkSupabaseConnection();
-      setConnectionStatus(connected ? 'connected' : 'error');
+      try {
+        console.log('Checking Supabase connection...');
+        const { connected, error } = await checkSupabaseConnection();
+        
+        if (connected) {
+          console.log('✅ Supabase connection successful');
+          setConnectionStatus('connected');
+        } else {
+          console.error('❌ Supabase connection failed:', error);
+          setConnectionStatus('error');
+          setConnectionError(error?.message || 'Database connection failed');
+        }
+      } catch (err: any) {
+        console.error('❌ Connection check error:', err);
+        setConnectionStatus('error');
+        setConnectionError(err.message || 'Failed to check database connection');
+      }
     };
     
+    // Add a timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      if (connectionStatus === 'checking') {
+        console.warn('⚠️ Connection check timeout, proceeding anyway');
+        setConnectionStatus('connected');
+      }
+    }, 10000); // 10 second timeout
+
     checkConnection();
-  }, []);
+
+    return () => clearTimeout(timeoutId);
+  }, [connectionStatus]);
 
   useEffect(() => {
     // Skip landing page if user is already authenticated
-    if (user && employee && !loading) {
+    if (user && employee && !loading && connectionStatus === 'connected') {
       setCurrentPage(employee.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
-    } else if (!loading && !user) {
+    } else if (!loading && !user && connectionStatus === 'connected') {
       // Only show landing page after loading is complete and no user
       if (currentPage === 'landing') {
         const timer = setTimeout(() => {
@@ -43,7 +69,7 @@ function App() {
         return () => clearTimeout(timer);
       }
     }
-  }, [user, employee, loading, currentPage]);
+  }, [user, employee, loading, currentPage, connectionStatus]);
 
   // Clear errors when page changes
   useEffect(() => {
@@ -133,15 +159,38 @@ function App() {
             <h1 className="text-2xl font-bold text-gray-900 mb-4">
               Database Connection Error
             </h1>
-            <p className="text-gray-600 mb-6">
-              Unable to connect to the database. Please check your internet connection or contact support.
+            <p className="text-gray-600 mb-4">
+              {connectionError || 'Unable to connect to the database. Please check your internet connection or contact support.'}
             </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 font-medium"
-            >
-              Retry Connection
-            </button>
+            <div className="space-y-3">
+              <button
+                onClick={() => {
+                  setConnectionStatus('checking');
+                  setConnectionError('');
+                }}
+                className="w-full bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 font-medium"
+              >
+                Retry Connection
+              </button>
+              <button
+                onClick={() => {
+                  console.log('Proceeding without connection check...');
+                  setConnectionStatus('connected');
+                }}
+                className="w-full bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 font-medium"
+              >
+                Continue Anyway
+              </button>
+            </div>
+            <div className="mt-6 p-4 bg-gray-50 rounded-lg text-left">
+              <h3 className="font-semibold text-gray-900 mb-2">Troubleshooting:</h3>
+              <ul className="text-sm text-gray-600 space-y-1">
+                <li>• Check your internet connection</li>
+                <li>• Verify Supabase credentials are correct</li>
+                <li>• Ensure database migrations have been applied</li>
+                <li>• Check browser console for detailed errors</li>
+              </ul>
+            </div>
           </div>
         </div>
       </ErrorBoundary>
