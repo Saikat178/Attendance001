@@ -142,57 +142,66 @@ function App() {
       setLoading(true);
       setError('');
 
-      // Try Supabase authentication first
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: identifier,
-        password: password,
-      });
-
-      if (data.user && !authError) {
-        // Get employee data from database
-        const { data: employee, error: employeeError } = await supabase
-          .from('employees')
-          .select('*')
-          .eq('id', data.user.id)
-          .maybeSingle();
-          
-        if (employee && !employeeError && employee.role === role) {
-          const user: Employee = {
-            id: employee.id,
-            name: employee.name,
-            email: employee.email,
-            employeeId: employee.employee_id,
-            password: '', // Don't store password in state
-            role: employee.role,
-            department: employee.department,
-            position: employee.position,
-            phone: employee.phone,
-            createdAt: new Date(employee.created_at),
-            isVerified: employee.is_verified
-          };
-          
-          setCurrentUser(user);
-          localStorage.setItem('currentUser', JSON.stringify(user));
-          setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
-          return;
-        }
-      }
-
-      // Fallback to mock data for demo
-      const user = mockEmployees.find(emp => 
+      // First, try to find user in mock data for demo mode
+      const mockUser = mockEmployees.find(emp => 
         (emp.email === identifier || emp.employeeId === identifier) && 
         emp.password === password &&
         emp.role === role
       );
 
-      if (!user) {
-        throw new Error('Invalid credentials or incorrect role selection');
+      if (mockUser) {
+        // Use mock data for demo
+        localStorage.setItem('currentUser', JSON.stringify(mockUser));
+        setCurrentUser(mockUser);
+        setCurrentPage(mockUser.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+        return;
       }
 
-      // Save user session for demo mode
-      localStorage.setItem('currentUser', JSON.stringify(user));
-      setCurrentUser(user);
-      setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+      // Try Supabase authentication if mock data doesn't match
+      try {
+        const { data, error: authError } = await supabase.auth.signInWithPassword({
+          email: identifier,
+          password: password,
+        });
+
+        if (data.user && !authError) {
+          // Get employee data from database
+          const { data: employee, error: employeeError } = await supabase
+            .from('employees')
+            .select('*')
+            .eq('id', data.user.id)
+            .maybeSingle();
+            
+          if (employee && !employeeError && employee.role === role) {
+            const user: Employee = {
+              id: employee.id,
+              name: employee.name,
+              email: employee.email,
+              employeeId: employee.employee_id,
+              password: '', // Don't store password in state
+              role: employee.role,
+              department: employee.department,
+              position: employee.position,
+              phone: employee.phone,
+              createdAt: new Date(employee.created_at),
+              isVerified: employee.is_verified
+            };
+            
+            setCurrentUser(user);
+            localStorage.setItem('currentUser', JSON.stringify(user));
+            setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
+            return;
+          } else if (employee && employee.role !== role) {
+            throw new Error('Invalid role selection for this account');
+          }
+        }
+      } catch (supabaseError) {
+        // Supabase authentication failed, but we already checked mock data
+        console.log('Supabase authentication failed, falling back to error message');
+      }
+
+      // If we reach here, neither mock nor Supabase authentication worked
+      throw new Error('Invalid credentials or incorrect role selection');
       
     } catch (err: any) {
       setError(err.message || 'Login failed. Please try again.');
@@ -224,89 +233,95 @@ function App() {
       setLoading(true);
       setError('');
 
-      // Check if employee ID already exists in Supabase
-      const { data: existingEmployee, error: checkError } = await supabase
-        .from('employees')
-        .select('employee_id')
-        .eq('employee_id', userData.employeeId)
-        .maybeSingle();
-
-      if (checkError && checkError.code !== 'PGRST116') {
-        // PGRST116 is "not found" which is what we want
-        throw new Error('Failed to check employee ID availability');
-      }
-
-      if (existingEmployee) {
-        throw new Error('Employee ID is already taken. Please choose a different one.');
-      }
-
-      // Check if email already exists in Supabase
-      const { data: existingEmail, error: emailCheckError } = await supabase
-        .from('employees')
-        .select('email')
-        .eq('email', userData.email)
-        .maybeSingle();
-
-      if (emailCheckError && emailCheckError.code !== 'PGRST116') {
-        throw new Error('Failed to check email availability');
-      }
-
-      if (existingEmail) {
-        throw new Error('Email is already registered. Please use a different email.');
-      }
-
-      // Try to create user in Supabase
-      const { data, error: authError } = await supabase.auth.signUp({
-        email: userData.email,
-        password: userData.password,
-        options: {
-          data: {
-            role: userData.role || 'employee'
-          }
-        }
-      });
-
-      if (data.user && !authError) {
-        // Create employee record
-        const { error: employeeError } = await supabase
-          .from('employees')
-          .insert({
-            id: data.user.id,
-            name: userData.name,
-            email: userData.email,
-            employee_id: userData.employeeId,
-            role: userData.role || 'employee',
-            phone: userData.phone,
-            department: userData.department,
-            position: userData.position,
-            is_verified: true
-          });
-
-        if (!employeeError) {
-          setCurrentPage('login');
-          setError('Registration successful! Please login with your credentials.');
-          return;
-        } else {
-          // If employee creation fails, clean up the auth user
-          await supabase.auth.admin.deleteUser(data.user.id);
-          throw new Error('Failed to create employee record. Please try again.');
-        }
-      }
-
-      // Fallback to mock data for demo
-      const existingUser = mockEmployees.find(emp => 
+      // Check if employee ID already exists in mock data first
+      const existingMockUser = mockEmployees.find(emp => 
         emp.email === userData.email || emp.employeeId === userData.employeeId
       );
 
-      if (existingUser) {
-        if (existingUser.employeeId === userData.employeeId) {
+      if (existingMockUser) {
+        if (existingMockUser.employeeId === userData.employeeId) {
           throw new Error('Employee ID is already taken. Please choose a different one.');
         }
-        if (existingUser.email === userData.email) {
+        if (existingMockUser.email === userData.email) {
           throw new Error('Email is already registered. Please use a different email.');
         }
       }
 
+      // Try Supabase first
+      try {
+        // Check if employee ID already exists in Supabase
+        const { data: existingEmployee, error: checkError } = await supabase
+          .from('employees')
+          .select('employee_id')
+          .eq('employee_id', userData.employeeId)
+          .maybeSingle();
+
+        if (checkError && checkError.code !== 'PGRST116') {
+          // PGRST116 is "not found" which is what we want
+          throw new Error('Failed to check employee ID availability');
+        }
+
+        if (existingEmployee) {
+          throw new Error('Employee ID is already taken. Please choose a different one.');
+        }
+
+        // Check if email already exists in Supabase
+        const { data: existingEmail, error: emailCheckError } = await supabase
+          .from('employees')
+          .select('email')
+          .eq('email', userData.email)
+          .maybeSingle();
+
+        if (emailCheckError && emailCheckError.code !== 'PGRST116') {
+          throw new Error('Failed to check email availability');
+        }
+
+        if (existingEmail) {
+          throw new Error('Email is already registered. Please use a different email.');
+        }
+
+        // Try to create user in Supabase
+        const { data, error: authError } = await supabase.auth.signUp({
+          email: userData.email,
+          password: userData.password,
+          options: {
+            data: {
+              role: userData.role || 'employee'
+            }
+          }
+        });
+
+        if (data.user && !authError) {
+          // Create employee record
+          const { error: employeeError } = await supabase
+            .from('employees')
+            .insert({
+              id: data.user.id,
+              name: userData.name,
+              email: userData.email,
+              employee_id: userData.employeeId,
+              role: userData.role || 'employee',
+              phone: userData.phone,
+              department: userData.department,
+              position: userData.position,
+              is_verified: true
+            });
+
+          if (!employeeError) {
+            setCurrentPage('login');
+            setError('Registration successful! Please login with your credentials.');
+            return;
+          } else {
+            // If employee creation fails, clean up the auth user
+            await supabase.auth.admin.deleteUser(data.user.id);
+            throw new Error('Failed to create employee record. Please try again.');
+          }
+        }
+      } catch (supabaseError) {
+        console.log('Supabase signup failed, falling back to mock data');
+      }
+
+      // Fallback to mock data for demo
       // Create new user with proper UUID
       const newUser: Employee = {
         id: generateUUID(),
