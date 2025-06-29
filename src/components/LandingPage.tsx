@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Building2, Clock, Calendar, Users, FileText, Coffee, CheckCircle, Shield } from 'lucide-react';
+import { Building2, Clock, Calendar, Users, FileText, Coffee, CheckCircle, Shield, ArrowRight } from 'lucide-react';
 
 interface LandingPageProps {
   onTransition: () => void;
@@ -8,6 +8,7 @@ interface LandingPageProps {
 const LandingPage: React.FC<LandingPageProps> = ({ onTransition }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [activeFeature, setActiveFeature] = useState(0);
+  const [countdown, setCountdown] = useState(3);
 
   const features = [
     {
@@ -40,10 +41,16 @@ const LandingPage: React.FC<LandingPageProps> = ({ onTransition }) => {
   useEffect(() => {
     setIsVisible(true);
     
-    // Auto-transition after 5 seconds
-    const timer = setTimeout(() => {
-      onTransition();
-    }, 5000);
+    // Countdown timer
+    const countdownInterval = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          onTransition();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
     // Rotate through features
     const featureInterval = setInterval(() => {
@@ -51,14 +58,20 @@ const LandingPage: React.FC<LandingPageProps> = ({ onTransition }) => {
     }, 2000);
 
     return () => {
-      clearTimeout(timer);
+      clearInterval(countdownInterval);
       clearInterval(featureInterval);
     };
   }, [onTransition, features.length]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-600 to-indigo-800 flex flex-col items-center justify-center p-4">
-      <div className={`text-center transition-all duration-1000 ${isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
+    <div className="min-h-screen bg-gradient-to-br from-blue-600 to-indigo-800 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      {/* Background Animation */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-white opacity-10 rounded-full animate-pulse"></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-white opacity-5 rounded-full animate-pulse delay-1000"></div>
+      </div>
+
+      <div className={`text-center transition-all duration-1000 relative z-10 ${isVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}>
         <div className="mb-8">
           <div className="flex items-center justify-center mb-6">
             <Building2 className="w-16 h-16 text-white mr-4" />
@@ -100,16 +113,32 @@ const LandingPage: React.FC<LandingPageProps> = ({ onTransition }) => {
             ))}
           </div>
           
-          <button
-            onClick={onTransition}
-            className="bg-white text-blue-700 px-8 py-3 rounded-lg hover:bg-blue-50 transition-colors duration-300 font-bold text-lg shadow-lg hover:shadow-xl transform hover:-translate-y-1"
-          >
-            Get Started
-          </button>
+          <div className="space-y-4">
+            <button
+              onClick={onTransition}
+              className="bg-white text-blue-700 px-8 py-3 rounded-lg hover:bg-blue-50 transition-all duration-300 font-bold text-lg shadow-lg hover:shadow-xl transform hover:-translate-y-1 flex items-center mx-auto"
+            >
+              Get Started
+              <ArrowRight className="w-5 h-5 ml-2" />
+            </button>
+            
+            <p className="text-blue-100 text-sm">
+              Auto-redirecting in {countdown} second{countdown !== 1 ? 's' : ''}...
+            </p>
+          </div>
         </div>
         
-        <div className="flex justify-center mt-8">
-          <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+        {/* Demo Credentials */}
+        <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 max-w-md mx-auto mt-8">
+          <h3 className="text-white font-semibold mb-4">Demo Credentials</h3>
+          <div className="space-y-2 text-sm text-blue-100">
+            <div className="bg-white/10 rounded p-2">
+              <strong>Employee:</strong> john@company.com / password123
+            </div>
+            <div className="bg-white/10 rounded p-2">
+              <strong>Admin:</strong> admin@company.com / admin123
+            </div>
+          </div>
         </div>
       </div>
     </div>

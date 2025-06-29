@@ -2,8 +2,6 @@ import React, { useState, useEffect, Suspense } from 'react';
 import ErrorBoundary from './components/ErrorBoundary';
 import LoadingSpinner from './components/LoadingSpinner';
 import { Employee } from './types';
-import { useAuth } from './hooks/useAuth';
-import { checkSupabaseConnection } from './lib/supabase';
 
 // Lazy load components for better performance
 const LandingPage = React.lazy(() => import('./components/LandingPage'));
@@ -15,78 +13,80 @@ const AdminDashboard = React.lazy(() => import('./components/AdminDashboard'));
 
 type Page = 'landing' | 'login' | 'signup' | 'admin-signup' | 'employee-dashboard' | 'admin-dashboard';
 
+// Mock data for demo purposes
+const mockEmployees: Employee[] = [
+  {
+    id: 'emp-1',
+    name: 'John Doe',
+    email: 'john@company.com',
+    employeeId: 'EMP001',
+    password: 'password123',
+    role: 'employee',
+    department: 'Engineering',
+    position: 'Software Developer',
+    createdAt: new Date(),
+    isVerified: true
+  },
+  {
+    id: 'admin-1',
+    name: 'Admin User',
+    email: 'admin@company.com',
+    employeeId: 'ADMIN001',
+    password: 'admin123',
+    role: 'admin',
+    department: 'Management',
+    position: 'System Administrator',
+    createdAt: new Date(),
+    isVerified: true
+  }
+];
+
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('landing');
-  const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'error'>('checking');
-  const [connectionError, setConnectionError] = useState<string>('');
-  const [connectionMode, setConnectionMode] = useState<string>('');
-  const { user, employee, loading, error, signIn, signUp, signOut, clearError } = useAuth();
+  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [isInitialized, setIsInitialized] = useState(false);
 
-  // Check database connection on app start
   useEffect(() => {
-    const checkConnection = async () => {
+    // Initialize the app
+    const initializeApp = async () => {
       try {
-        console.log('🔍 Checking Supabase connection...');
-        const { connected, error, mode } = await checkSupabaseConnection();
+        setLoading(true);
         
-        setConnectionMode(mode || 'unknown');
-        
-        if (connected) {
-          console.log(`✅ Connection established (${mode})`);
-          setConnectionStatus('connected');
-          
-          if (mode === 'mock') {
-            console.warn('⚠️ Running in mock mode - Supabase not configured');
-          } else if (mode === 'degraded') {
-            console.warn('⚠️ Running in degraded mode - some features may not work');
-          }
-        } else {
-          console.error('❌ Connection failed:', error);
-          setConnectionStatus('error');
-          setConnectionError(error?.message || 'Database connection failed');
+        // Check for existing session
+        const savedUser = localStorage.getItem('currentUser');
+        if (savedUser) {
+          const user = JSON.parse(savedUser);
+          setCurrentUser(user);
+          setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
         }
-      } catch (err: any) {
-        console.error('❌ Connection check error:', err);
-        // Don't block the app - allow it to proceed
-        setConnectionStatus('connected');
-        setConnectionMode('offline');
-        console.warn('⚠️ Proceeding in offline mode');
+        
+        setIsInitialized(true);
+      } catch (err) {
+        console.error('App initialization error:', err);
+        setError('Failed to initialize app');
+      } finally {
+        setLoading(false);
       }
     };
-    
-    // Add a timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
-      if (connectionStatus === 'checking') {
-        console.warn('⚠️ Connection check timeout, proceeding anyway');
-        setConnectionStatus('connected');
-        setConnectionMode('timeout');
-      }
-    }, 5000); // 5 second timeout
 
-    checkConnection();
-
-    return () => clearTimeout(timeoutId);
+    initializeApp();
   }, []);
 
   useEffect(() => {
-    // Skip landing page if user is already authenticated
-    if (user && employee && !loading && connectionStatus === 'connected') {
-      setCurrentPage(employee.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
-    } else if (!loading && !user && connectionStatus === 'connected') {
-      // Only show landing page after loading is complete and no user
-      if (currentPage === 'landing') {
-        const timer = setTimeout(() => {
-          setCurrentPage('login');
-        }, 3000); // Reduced from 5 seconds
-        return () => clearTimeout(timer);
-      }
+    // Auto-transition from landing page
+    if (currentPage === 'landing' && isInitialized && !currentUser) {
+      const timer = setTimeout(() => {
+        setCurrentPage('login');
+      }, 3000);
+      return () => clearTimeout(timer);
     }
-  }, [user, employee, loading, currentPage, connectionStatus]);
+  }, [currentPage, isInitialized, currentUser]);
 
-  // Clear errors when page changes
-  useEffect(() => {
-    clearError();
-  }, [currentPage, clearError]);
+  const clearError = () => {
+    setError('');
+  };
 
   const handleLandingTransition = () => {
     setCurrentPage('login');
@@ -94,21 +94,30 @@ function App() {
 
   const handleLogin = async (identifier: string, password: string, role: 'employee' | 'admin') => {
     try {
-      const { data, error } = await signIn(identifier, password);
-      
-      if (error) {
-        throw new Error(error.message || 'Login failed');
+      setLoading(true);
+      setError('');
+
+      // Find user by email or employee ID
+      const user = mockEmployees.find(emp => 
+        (emp.email === identifier || emp.employeeId === identifier) && 
+        emp.password === password &&
+        emp.role === role
+      );
+
+      if (!user) {
+        throw new Error('Invalid credentials or incorrect role selection');
       }
+
+      // Save user session
+      localStorage.setItem('currentUser', JSON.stringify(user));
+      setCurrentUser(user);
+      setCurrentPage(user.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
       
-      if (data?.user && employee) {
-        // Verify role matches
-        if (employee.role !== role) {
-          throw new Error('Invalid credentials or incorrect role selection');
-        }
-        setCurrentPage(employee.role === 'admin' ? 'admin-dashboard' : 'employee-dashboard');
-      }
     } catch (err: any) {
-      throw new Error(err.message || 'Login failed. Please try again.');
+      setError(err.message || 'Login failed. Please try again.');
+      throw err;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -131,22 +140,44 @@ function App() {
     position?: string;
   }) => {
     try {
-      const { data, error } = await signUp(userData.email, userData.password, {
-        name: userData.name,
-        employeeId: userData.employeeId,
-        role: userData.role || 'employee',
-        phone: userData.phone,
-        department: userData.department,
-        position: userData.position
-      });
+      setLoading(true);
+      setError('');
 
-      if (error) {
-        throw new Error(error.message || 'Registration failed');
+      // Check if user already exists
+      const existingUser = mockEmployees.find(emp => 
+        emp.email === userData.email || emp.employeeId === userData.employeeId
+      );
+
+      if (existingUser) {
+        throw new Error('User with this email or employee ID already exists');
       }
 
+      // Create new user
+      const newUser: Employee = {
+        id: `user-${Date.now()}`,
+        name: userData.name,
+        email: userData.email,
+        employeeId: userData.employeeId,
+        password: userData.password,
+        role: userData.role || 'employee',
+        department: userData.department,
+        position: userData.position,
+        phone: userData.phone,
+        createdAt: new Date(),
+        isVerified: true
+      };
+
+      // Add to mock data
+      mockEmployees.push(newUser);
+      
       setCurrentPage('login');
+      setError('Registration successful! Please login with your credentials.');
+      
     } catch (err: any) {
-      throw new Error(err.message || 'Registration failed. Please try again.');
+      setError(err.message || 'Registration failed. Please try again.');
+      throw err;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -155,67 +186,17 @@ function App() {
   };
 
   const handleLogout = async () => {
-    await signOut();
+    localStorage.removeItem('currentUser');
+    setCurrentUser(null);
     setCurrentPage('login');
   };
 
-  // Show connection error only if it's a real error (not mock/degraded mode)
-  if (connectionStatus === 'error' && connectionMode !== 'mock' && connectionMode !== 'degraded') {
-    return (
-      <ErrorBoundary>
-        <div className="min-h-screen bg-gradient-to-br from-red-50 to-orange-50 flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <span className="text-2xl">⚠️</span>
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">
-              Database Connection Error
-            </h1>
-            <p className="text-gray-600 mb-4">
-              {connectionError || 'Unable to connect to the database. Please check your internet connection or contact support.'}
-            </p>
-            <div className="space-y-3">
-              <button
-                onClick={() => {
-                  setConnectionStatus('checking');
-                  setConnectionError('');
-                }}
-                className="w-full bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 font-medium"
-              >
-                Retry Connection
-              </button>
-              <button
-                onClick={() => {
-                  console.log('Proceeding without connection check...');
-                  setConnectionStatus('connected');
-                  setConnectionMode('forced');
-                }}
-                className="w-full bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 font-medium"
-              >
-                Continue Anyway
-              </button>
-            </div>
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg text-left">
-              <h3 className="font-semibold text-gray-900 mb-2">Troubleshooting:</h3>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>• Check your internet connection</li>
-                <li>• Verify Supabase credentials are correct</li>
-                <li>• Ensure database migrations have been applied</li>
-                <li>• Check browser console for detailed errors</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </ErrorBoundary>
-    );
-  }
-
-  // Show loading spinner while checking authentication or connection
-  if (loading || connectionStatus === 'checking') {
+  // Show loading spinner during initialization
+  if (!isInitialized || loading) {
     return (
       <LoadingSpinner 
         size="xl" 
-        text={connectionStatus === 'checking' ? 'Connecting to database...' : 'Loading...'} 
+        text="Loading application..." 
         fullScreen 
       />
     );
@@ -268,15 +249,15 @@ function App() {
           </Suspense>
         );
       case 'employee-dashboard':
-        return employee ? (
+        return currentUser ? (
           <Suspense fallback={<LoadingSpinner size="xl" text="Loading dashboard..." fullScreen />}>
-            <EmployeeDashboard user={employee} onLogout={pageProps.onLogout} />
+            <EmployeeDashboard user={currentUser} onLogout={pageProps.onLogout} />
           </Suspense>
         ) : null;
       case 'admin-dashboard':
-        return employee ? (
+        return currentUser ? (
           <Suspense fallback={<LoadingSpinner size="xl" text="Loading dashboard..." fullScreen />}>
-            <AdminDashboard user={employee} onLogout={pageProps.onLogout} />
+            <AdminDashboard user={currentUser} onLogout={pageProps.onLogout} />
           </Suspense>
         ) : null;
       default:
@@ -291,20 +272,13 @@ function App() {
   return (
     <ErrorBoundary>
       <div className="App">
-        {/* Connection Status Indicator */}
-        {connectionMode === 'mock' && (
-          <div className="fixed top-0 left-0 right-0 bg-yellow-500 text-white text-center py-1 text-sm z-50">
-            ⚠️ Running in demo mode - Supabase not configured
-          </div>
-        )}
-        {connectionMode === 'degraded' && (
-          <div className="fixed top-0 left-0 right-0 bg-orange-500 text-white text-center py-1 text-sm z-50">
-            ⚠️ Limited functionality - database connection issues
-          </div>
-        )}
+        {/* Demo Mode Indicator */}
+        <div className="fixed top-0 left-0 right-0 bg-blue-600 text-white text-center py-2 text-sm z-50">
+          🚀 Demo Mode - Use: john@company.com / password123 (Employee) or admin@company.com / admin123 (Admin)
+        </div>
         
         {error && (
-          <div className="fixed top-4 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-lg z-50 max-w-sm">
+          <div className="fixed top-16 right-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg shadow-lg z-50 max-w-sm">
             <div className="flex items-center justify-between">
               <span className="text-sm">{error}</span>
               <button
@@ -316,7 +290,10 @@ function App() {
             </div>
           </div>
         )}
-        {renderCurrentPage()}
+        
+        <div className="pt-12">
+          {renderCurrentPage()}
+        </div>
       </div>
     </ErrorBoundary>
   );
