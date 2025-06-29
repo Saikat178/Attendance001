@@ -223,6 +223,37 @@ function App() {
       setLoading(true);
       setError('');
 
+      // Check if employee ID already exists in Supabase
+      const { data: existingEmployee, error: checkError } = await supabase
+        .from('employees')
+        .select('employee_id')
+        .eq('employee_id', userData.employeeId)
+        .maybeSingle();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        // PGRST116 is "not found" which is what we want
+        throw new Error('Failed to check employee ID availability');
+      }
+
+      if (existingEmployee) {
+        throw new Error('Employee ID is already taken. Please choose a different one.');
+      }
+
+      // Check if email already exists in Supabase
+      const { data: existingEmail, error: emailCheckError } = await supabase
+        .from('employees')
+        .select('email')
+        .eq('email', userData.email)
+        .maybeSingle();
+
+      if (emailCheckError && emailCheckError.code !== 'PGRST116') {
+        throw new Error('Failed to check email availability');
+      }
+
+      if (existingEmail) {
+        throw new Error('Email is already registered. Please use a different email.');
+      }
+
       // Try to create user in Supabase
       const { data, error: authError } = await supabase.auth.signUp({
         email: userData.email,
@@ -254,6 +285,10 @@ function App() {
           setCurrentPage('login');
           setError('Registration successful! Please login with your credentials.');
           return;
+        } else {
+          // If employee creation fails, clean up the auth user
+          await supabase.auth.admin.deleteUser(data.user.id);
+          throw new Error('Failed to create employee record. Please try again.');
         }
       }
 
@@ -263,7 +298,12 @@ function App() {
       );
 
       if (existingUser) {
-        throw new Error('User with this email or employee ID already exists');
+        if (existingUser.employeeId === userData.employeeId) {
+          throw new Error('Employee ID is already taken. Please choose a different one.');
+        }
+        if (existingUser.email === userData.email) {
+          throw new Error('Email is already registered. Please use a different email.');
+        }
       }
 
       // Create new user with proper UUID
